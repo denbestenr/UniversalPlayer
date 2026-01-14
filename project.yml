@@ -1,0 +1,39 @@
+name: UniversalPlayer
+options:
+  bundleIdPrefix: com.universalplayer
+  deploymentTarget:
+    iOS: "16.0"
+  xcodeVersion: "15.0"
+  generateEmptyDirectories: true
+
+targets:
+  UniversalPlayer:
+    type: application
+    platform: iOS
+    sources:
+      - UniversalPlayer
+    settings:
+      base:
+        INFOPLIST_FILE: UniversalPlayer/Info.plist
+        PRODUCT_BUNDLE_IDENTIFIER: com.universalplayer.app
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        DEVELOPMENT_TEAM: ""
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_VERSION: "5.9"
+        ENABLE_USER_SCRIPT_SANDBOXING: false
+    dependencies: []
+    info:
+      path: UniversalPlayer/Info.plist
+      properties:
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
