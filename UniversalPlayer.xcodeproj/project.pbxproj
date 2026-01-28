@@ -21,9 +21,6 @@
 /* Begin PBXFileReference section */
 		3D0B3ED019F219E56FFAF776 /* Pods-UniversalPlayer.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-UniversalPlayer.release.xcconfig"; path = "Target Support Files/Pods-UniversalPlayer/Pods-UniversalPlayer.release.xcconfig"; sourceTree = "<group>"; };
 		66A7DC666FC94DBCD42BF0B6 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
-		SMB001FILE000000000001 /* SMBServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SMBServer.swift; sourceTree = "<group>"; };
-		SMB002FILE000000000002 /* SMBBrowserViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SMBBrowserViewModel.swift; sourceTree = "<group>"; };
-		SMB003FILE000000000003 /* SMBBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SMBBrowserView.swift; sourceTree = "<group>"; };
 		67CC20BD39779D71C51A9888 /* PlayerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerViewModel.swift; sourceTree = "<group>"; };
 		86D04BE1AF5B5C6D2FBFC6EC /* UniversalPlayerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UniversalPlayerApp.swift; sourceTree = "<group>"; };
 		95A90C7987FB8CA99350747A /* Pods_UniversalPlayer.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_UniversalPlayer.framework; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -32,6 +29,9 @@
 		EC9D6AC134794BC31D55E747 /* UniversalPlayer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = UniversalPlayer.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		FFC61BDFE4F42BAE3651055E /* Pods-UniversalPlayer.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-UniversalPlayer.debug.xcconfig"; path = "Target Support Files/Pods-UniversalPlayer/Pods-UniversalPlayer.debug.xcconfig"; sourceTree = "<group>"; };
 		FFE0FEE771BE20B759A7443E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		SMB001FILE000000000001 /* SMBServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SMBServer.swift; sourceTree = "<group>"; };
+		SMB002FILE000000000002 /* SMBBrowserViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SMBBrowserViewModel.swift; sourceTree = "<group>"; };
+		SMB003FILE000000000003 /* SMBBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SMBBrowserView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -161,13 +161,9 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-UniversalPlayer/Pods-UniversalPlayer-frameworks-${CONFIGURATION}-input-files.xcfilelist",
 			);
-			inputPaths = (
-			);
 			name = "[CP] Embed Pods Frameworks";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-UniversalPlayer/Pods-UniversalPlayer-frameworks-${CONFIGURATION}-output-files.xcfilelist",
-			);
-			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
