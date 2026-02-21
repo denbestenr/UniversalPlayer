@@ -2,7 +2,7 @@ name: UniversalPlayer
 options:
   bundleIdPrefix: com.universalplayer
   deploymentTarget:
-    iOS: "16.0"
+    iOS: "15.5"
   xcodeVersion: "15.0"
   generateEmptyDirectories: true
 
@@ -18,15 +18,19 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.universalplayer.app
         MARKETING_VERSION: "1.0.0"
         CURRENT_PROJECT_VERSION: "1"
-        DEVELOPMENT_TEAM: ""
+        DEVELOPMENT_TEAM: 952A476Z76
         CODE_SIGN_STYLE: Automatic
         TARGETED_DEVICE_FAMILY: "1,2"
         SWIFT_VERSION: "5.9"
         ENABLE_USER_SCRIPT_SANDBOXING: false
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies: []
     info:
       path: UniversalPlayer/Info.plist
       properties:
+        NSLocalNetworkUsageDescription: "UniversalPlayer scant het lokale netwerk om SMB/CIFS servers te vinden voor het afspelen van video bestanden."
+        NSBonjourServices:
+          - _smb._tcp
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait

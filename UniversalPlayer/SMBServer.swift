@@ -5,8 +5,16 @@ struct SMBServer: Identifiable, Codable, Hashable {
     var name: String
     var hostname: String
     var share: String
-    var username: String
-    var password: String
+
+    // Credentials are stored in Keychain, not in UserDefaults
+    // These are transient properties populated at runtime
+    var username: String = ""
+    var password: String = ""
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, hostname, share
+        // username and password excluded from Codable
+    }
 
     init(id: UUID = UUID(), name: String, hostname: String, share: String, username: String = "", password: String = "") {
         self.id = id
@@ -15,6 +23,31 @@ struct SMBServer: Identifiable, Codable, Hashable {
         self.share = share
         self.username = username
         self.password = password
+    }
+
+    // Unique key for keychain storage
+    var keychainKey: String {
+        "\(hostname)/\(share)"
+    }
+
+    // Load credentials from keychain
+    mutating func loadCredentials() {
+        if let creds = KeychainService.shared.loadCredentials(for: keychainKey) {
+            self.username = creds.username
+            self.password = creds.password
+        }
+    }
+
+    // Save credentials to keychain
+    func saveCredentials() {
+        if !username.isEmpty || !password.isEmpty {
+            KeychainService.shared.saveCredentials(for: keychainKey, username: username, password: password)
+        }
+    }
+
+    // Delete credentials from keychain
+    func deleteCredentials() {
+        KeychainService.shared.deleteCredentials(for: keychainKey)
     }
 
     var baseURL: URL? {
@@ -55,7 +88,11 @@ class SMBServerStorage: ObservableObject {
 
     func loadServers() {
         if let data = UserDefaults.standard.data(forKey: storageKey),
-           let decoded = try? JSONDecoder().decode([SMBServer].self, from: data) {
+           var decoded = try? JSONDecoder().decode([SMBServer].self, from: data) {
+            // Load credentials from keychain for each server
+            for i in decoded.indices {
+                decoded[i].loadCredentials()
+            }
             servers = decoded
         }
     }
@@ -67,17 +104,23 @@ class SMBServerStorage: ObservableObject {
     }
 
     func addServer(_ server: SMBServer) {
+        // Save credentials to keychain
+        server.saveCredentials()
         servers.append(server)
         saveServers()
     }
 
     func removeServer(_ server: SMBServer) {
+        // Remove credentials from keychain
+        server.deleteCredentials()
         servers.removeAll { $0.id == server.id }
         saveServers()
     }
 
     func updateServer(_ server: SMBServer) {
         if let index = servers.firstIndex(where: { $0.id == server.id }) {
+            // Update credentials in keychain
+            server.saveCredentials()
             servers[index] = server
             saveServers()
         }

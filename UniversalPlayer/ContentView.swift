@@ -1,50 +1,133 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import UIKit
 
 struct ContentView: View {
     @StateObject private var playerViewModel = PlayerViewModel()
+    @ObservedObject var uploadManager = BackgroundUploadManager.shared
     @State private var showFilePicker = false
     @State private var showNetworkBrowser = false
+    @State private var showPlayer = false
+    @State private var showSettings = false
+    @State private var showUploadedVideos = false
 
     var body: some View {
-        NavigationStack {
-            VStack {
-                if let url = playerViewModel.currentMediaURL {
-                    PlayerView(viewModel: playerViewModel)
-                } else {
-                    emptyStateView
+        NavigationView {
+            ZStack {
+                emptyStateView
+
+                // Upload progress overlay
+                if uploadManager.isUploading {
+                    uploadProgressView
                 }
             }
             .navigationTitle("Universal Player")
             .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Menu {
-                        Button(action: { showFilePicker = true }) {
-                            Label("Lokale bestanden", systemImage: "folder")
-                        }
-                        Button(action: { showNetworkBrowser = true }) {
-                            Label("Netwerkserver (SMB)", systemImage: "server.rack")
-                        }
-                    } label: {
-                        Image(systemName: "folder.badge.plus")
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button(action: { showSettings = true }) {
+                        Image(systemName: "gear")
                     }
                 }
             }
             .sheet(isPresented: $showFilePicker) {
                 DocumentPicker(onSelect: { url in
                     playerViewModel.loadMedia(url: url)
+                    showPlayer = true
                 })
             }
             .sheet(isPresented: $showNetworkBrowser) {
                 SMBBrowserView(
                     onSelectMedia: { url in
                         playerViewModel.loadMedia(url: url)
+                        showNetworkBrowser = false
+                        showPlayer = true
                     },
                     onDismiss: {
                         showNetworkBrowser = false
                     }
                 )
             }
+            .fullScreenCover(isPresented: $showPlayer) {
+                FullscreenPlayerView(viewModel: playerViewModel, onClose: {
+                    playerViewModel.stop()
+                    showPlayer = false
+                })
+            }
+            .sheet(isPresented: $showSettings) {
+                SettingsView(
+                    onOpenLocalFiles: {
+                        showSettings = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            showFilePicker = true
+                        }
+                    },
+                    onOpenNetworkBrowser: {
+                        showSettings = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            showNetworkBrowser = true
+                        }
+                    }
+                )
+            }
+            .sheet(isPresented: $showUploadedVideos) {
+                UploadedVideosView()
+            }
+            .alert(uploadManager.completionSuccess ? "Upload Geslaagd!" : "Upload Mislukt", isPresented: $uploadManager.showCompletionAlert) {
+                Button("OK") {}
+                if uploadManager.completionSuccess, let videoId = uploadManager.uploadedVideoId {
+                    Button("Bekijk op YouTube") {
+                        if let url = URL(string: "https://youtube.com/watch?v=\(videoId)") {
+                            UIApplication.shared.open(url)
+                        }
+                    }
+                }
+            } message: {
+                Text(uploadManager.completionMessage)
+            }
+        }
+    }
+
+    // MARK: - Upload Progress View
+
+    private var uploadProgressView: some View {
+        VStack {
+            Spacer()
+
+            VStack(spacing: 16) {
+                HStack {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 40))
+                        .foregroundColor(.blue)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(uploadManager.statusMessage)
+                            .font(.title2)
+                            .fontWeight(.semibold)
+
+                        Text(uploadManager.currentVideoTitle)
+                            .font(.title3)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer()
+
+                    Text("\(Int(uploadManager.overallProgress * 100))%")
+                        .font(.system(size: 36, weight: .bold))
+                        .foregroundColor(.blue)
+                }
+
+                ProgressView(value: uploadManager.overallProgress)
+                    .scaleEffect(y: 2)
+            }
+            .padding(24)
+            .background(
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(Color(.systemBackground))
+                    .shadow(radius: 10)
+            )
+            .padding(.horizontal, 20)
+            .padding(.bottom, 40)
         }
     }
 
@@ -78,10 +161,20 @@ struct ContentView: View {
                 }
             }
 
-            Text("Ondersteunt: AVI, MKV, MP4, MOV, WMV, FLV\nInclusief DV en MS-Video codecs\n\nNetwerk: SMB/CIFS shares")
+            Text("Ondersteunt: AVI, MKV, MP4, MOV, WMV, FLV\nInclusief DV en MS-Video codecs\n\nNetwerk: Apple en Windows")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
+
+            Button(action: { showUploadedVideos = true }) {
+                Label("YouTube video's", systemImage: "film.stack")
+                    .font(.headline)
+                    .padding()
+                    .frame(minWidth: 200)
+                    .background(Color.green)
+                    .foregroundColor(.white)
+                    .cornerRadius(10)
+            }
         }
         .padding()
     }

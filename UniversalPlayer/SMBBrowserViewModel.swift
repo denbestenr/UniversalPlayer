@@ -149,6 +149,20 @@ class SMBBrowserViewModel: ObservableObject {
         let ext = item.url.pathExtension.lowercased()
         return videoExtensions.contains(ext)
     }
+
+    func isImageFile(_ item: SMBItem) -> Bool {
+        let imageExtensions = ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "heic", "heif", "webp"]
+        let ext = item.url.pathExtension.lowercased()
+        return imageExtensions.contains(ext)
+    }
+
+    var imageFiles: [SMBItem] {
+        items.filter { isImageFile($0) }
+    }
+
+    func indexOfImage(_ item: SMBItem) -> Int? {
+        imageFiles.firstIndex(where: { $0.id == item.id })
+    }
 }
 
 // Helper class to observe VLCMediaList changes
