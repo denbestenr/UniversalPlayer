@@ -12,6 +12,7 @@ struct SMBBrowserView: View {
     @State private var showImageViewer = false
     @State private var selectedImageIndex: Int = 0
 
+    var showDiscovery: Bool = true
     let onSelectMedia: (URL) -> Void
     let onDismiss: () -> Void
 
@@ -68,7 +69,7 @@ struct SMBBrowserView: View {
                 )
             }
             .onAppear {
-                if !isConnected {
+                if !isConnected && showDiscovery {
                     networkScanner.startScan()
                 }
             }
@@ -76,6 +77,7 @@ struct SMBBrowserView: View {
                 networkScanner.stopScan()
             }
         }
+        .navigationViewStyle(.stack)
     }
 
     // MARK: - Server List View
@@ -83,42 +85,44 @@ struct SMBBrowserView: View {
     private var serverListView: some View {
         List {
             // Discovered servers section
-            Section {
-                if networkScanner.isScanning {
-                    HStack {
-                        ProgressView()
-                            .padding(.trailing, 8)
-                        Text("Scannen naar servers...")
-                            .foregroundColor(.secondary)
-                    }
-                } else if networkScanner.discoveredServers.isEmpty {
-                    HStack {
-                        Image(systemName: "wifi.exclamationmark")
-                            .foregroundColor(.secondary)
-                        Text(networkScanner.scanError ?? "Geen servers gevonden")
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Button(action: { networkScanner.startScan() }) {
-                            Image(systemName: "arrow.clockwise")
-                        }
-                    }
-                } else {
-                    ForEach(networkScanner.discoveredServers) { server in
-                        DiscoveredServerRowView(server: server) {
-                            selectedDiscoveredServer = server
-                        }
-                    }
-
-                    Button(action: { networkScanner.startScan() }) {
+            if showDiscovery {
+                Section {
+                    if networkScanner.isScanning {
                         HStack {
-                            Image(systemName: "arrow.clockwise")
-                            Text("Opnieuw scannen")
+                            ProgressView()
+                                .padding(.trailing, 8)
+                            Text("Scannen naar servers...")
+                                .foregroundColor(.secondary)
                         }
-                        .foregroundColor(.accentColor)
+                    } else if networkScanner.discoveredServers.isEmpty {
+                        HStack {
+                            Image(systemName: "wifi.exclamationmark")
+                                .foregroundColor(.secondary)
+                            Text(networkScanner.scanError ?? "Geen servers gevonden")
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Button(action: { networkScanner.startScan() }) {
+                                Image(systemName: "arrow.clockwise")
+                            }
+                        }
+                    } else {
+                        ForEach(networkScanner.discoveredServers) { server in
+                            DiscoveredServerRowView(server: server) {
+                                selectedDiscoveredServer = server
+                            }
+                        }
+
+                        Button(action: { networkScanner.startScan() }) {
+                            HStack {
+                                Image(systemName: "arrow.clockwise")
+                                Text("Opnieuw scannen")
+                            }
+                            .foregroundColor(.accentColor)
+                        }
                     }
+                } header: {
+                    Text("Gevonden op netwerk")
                 }
-            } header: {
-                Text("Gevonden op netwerk")
             }
 
             // Saved servers section
@@ -129,9 +133,11 @@ struct SMBBrowserView: View {
                             connect(to: server)
                         }
                     }
-                    .onDelete(perform: deleteServers)
+                    .onDelete(perform: showDiscovery ? deleteServers : nil)
                 } header: {
-                    Text("Opgeslagen servers")
+                    if showDiscovery {
+                        Text("Opgeslagen servers")
+                    }
                 }
             }
         }

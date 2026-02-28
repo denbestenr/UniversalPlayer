@@ -316,11 +316,11 @@ class YouTubeService: NSObject, ObservableObject {
     }
 
     private func uploadWithProgress(request: URLRequest, data: Data) async throws -> (Data, URLResponse) {
-        var mutableRequest = request
-        mutableRequest.httpBody = data
+        let delegate = UploadProgressDelegate()
+        let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
 
-        // Simple upload without detailed progress for now
-        let (responseData, response) = try await URLSession.shared.data(for: mutableRequest)
+        let (responseData, response) = try await session.upload(for: request, from: data, delegate: delegate)
 
         await MainActor.run {
             self.uploadProgress = 1.0
@@ -435,6 +435,27 @@ enum YouTubeProcessingStatus: String {
     case processing
     case processed
     case failed
+}
+
+// MARK: - Upload Progress Delegate
+
+class UploadProgressDelegate: NSObject, URLSessionTaskDelegate {
+    override init() {
+        super.init()
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+        Task { @MainActor in
+            let manager = BackgroundUploadManager.shared
+            manager.uploadTotalBytes = totalBytesExpectedToSend
+            manager.uploadedBytes = totalBytesSent
+            if totalBytesExpectedToSend > 0 {
+                // Upload progress maps to 50-100% of overall
+                let uploadFraction = Double(totalBytesSent) / Double(totalBytesExpectedToSend)
+                manager.overallProgress = 0.5 + (uploadFraction * 0.5)
+            }
+        }
+    }
 }
 
 // MARK: - Errors

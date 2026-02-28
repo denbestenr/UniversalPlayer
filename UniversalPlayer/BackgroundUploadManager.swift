@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
 import UserNotifications
-@preconcurrency import MobileVLCKit
+import AMSMB2
 
 @MainActor
 class BackgroundUploadManager: ObservableObject {
@@ -15,6 +15,13 @@ class BackgroundUploadManager: ObservableObject {
     @Published var completionMessage: String = ""
     @Published var completionSuccess = false
     @Published var uploadedVideoId: String?
+    @Published var downloadTotalBytes: Int64 = 0
+    @Published var downloadedBytes: Int64 = 0
+    @Published var downloadSpeedBytesPerSec: Double = 0
+    @Published var isDownloadingFromSMB = false
+    @Published var uploadTotalBytes: Int64 = 0
+    @Published var uploadedBytes: Int64 = 0
+    @Published var uploadStartTime: Date?
 
     private init() {
         requestNotificationPermission()
@@ -41,11 +48,19 @@ class BackgroundUploadManager: ObservableObject {
                 // If SMB file, download first
                 if isSMBFile {
                     statusMessage = "Downloaden van server..."
+                    isDownloadingFromSMB = true
+                    downloadTotalBytes = 0
+                    downloadedBytes = 0
+                    downloadSpeedBytesPerSec = 0
                     fileToUpload = try await downloadSMBFile(url: url)
+                    isDownloadingFromSMB = false
                 }
 
                 // Upload to YouTube
                 statusMessage = "Uploaden naar YouTube..."
+                uploadTotalBytes = 0
+                uploadedBytes = 0
+                uploadStartTime = Date()
                 if !isSMBFile {
                     overallProgress = 0.1
                 }
@@ -106,75 +121,105 @@ class BackgroundUploadManager: ObservableObject {
 
         try? FileManager.default.removeItem(at: localURL)
 
-        return try await withCheckedThrowingContinuation { continuation in
-            Task { @MainActor in
-                let media = VLCMedia(url: url)
-                let player = VLCMediaPlayer()
+        // Parse SMB URL components
+        guard let host = url.host, !host.isEmpty else {
+            throw NSError(domain: "Download", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "Ongeldige SMB URL: geen hostnaam"])
+        }
 
-                let escapedPath = localURL.path.replacingOccurrences(of: "'", with: "\\'")
-                media.addOption(":sout=#file{dst='\(escapedPath)'}")
-                media.addOption(":sout-all")
-                media.addOption(":sout-keep")
-                media.addOption(":no-video")
-                media.addOption(":no-audio")
+        let pathComponents = url.pathComponents.filter { $0 != "/" }
+        guard pathComponents.count >= 2 else {
+            throw NSError(domain: "Download", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "Ongeldige SMB URL: share of bestandspad ontbreekt"])
+        }
 
-                player.media = media
+        let share = pathComponents[0]
+        let filePath = pathComponents.dropFirst().joined(separator: "/")
 
-                var isFinished = false
-                var progressTimer: Timer?
+        // Build server URL
+        var serverURLString = "smb://\(host)"
+        if let port = url.port { serverURLString += ":\(port)" }
+        guard let serverURL = URL(string: serverURLString) else {
+            throw NSError(domain: "Download", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "Kan server URL niet aanmaken"])
+        }
 
-                progressTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-                    guard let self = self else { return }
-                    if player.isPlaying {
-                        let progress = Double(player.position)
-                        Task { @MainActor in
-                            self.overallProgress = min(0.49, progress * 0.5)
-                        }
-                    }
-                }
+        // Load credentials from Keychain
+        let credential: URLCredential
+        if let user = url.user, !user.isEmpty {
+            credential = URLCredential(user: user, password: url.password ?? "", persistence: .forSession)
+        } else if let creds = KeychainService.shared.loadCredentials(for: "\(host)/\(share)"),
+                  !creds.username.isEmpty {
+            credential = URLCredential(user: creds.username, password: creds.password, persistence: .forSession)
+        } else {
+            credential = URLCredential(user: "guest", password: "", persistence: .forSession)
+        }
 
-                NotificationCenter.default.addObserver(forName: NSNotification.Name(VLCMediaPlayerStateChanged), object: player, queue: .main) { [weak self] _ in
-                    let state = player.state
+        guard let client = AMSMB2(url: serverURL, domain: "WORKGROUP", credential: credential) else {
+            throw NSError(domain: "Download", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "Kan SMB client niet initialiseren"])
+        }
 
-                    if state == .ended || state == .stopped {
-                        if !isFinished {
-                            isFinished = true
-                            progressTimer?.invalidate()
-                            player.stop()
+        let progressTracker = SendableProgressTracker()
 
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                                if FileManager.default.fileExists(atPath: localURL.path) {
-                                    Task { @MainActor in
-                                        self?.overallProgress = 0.5
-                                        self?.statusMessage = "Uploaden naar YouTube..."
-                                    }
-                                    continuation.resume(returning: localURL)
-                                } else {
-                                    continuation.resume(throwing: NSError(domain: "Download", code: -1, userInfo: [NSLocalizedDescriptionKey: "Bestand niet gevonden na download"]))
-                                }
-                            }
-                        }
-                    } else if state == .error {
-                        if !isFinished {
-                            isFinished = true
-                            progressTimer?.invalidate()
-                            player.stop()
-                            continuation.resume(throwing: NSError(domain: "Download", code: -1, userInfo: [NSLocalizedDescriptionKey: "VLC fout bij downloaden"]))
-                        }
-                    }
-                }
+        progressTracker.resetStartTime()
 
-                player.play()
+        let progressTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                guard let self = self else { break }
+                self.overallProgress = min(0.49, progressTracker.progress * 0.5)
+                self.downloadedBytes = progressTracker.bytesDownloaded
+                self.downloadTotalBytes = progressTracker.totalBytes
+                self.downloadSpeedBytesPerSec = progressTracker.bytesPerSecond
+            }
+        }
 
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1800) {
-                    if !isFinished {
-                        isFinished = true
-                        progressTimer?.invalidate()
-                        player.stop()
-                        continuation.resume(throwing: NSError(domain: "Download", code: -1, userInfo: [NSLocalizedDescriptionKey: "Download timeout"]))
+        defer { progressTask.cancel() }
+
+        do {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                client.connectShare(name: share) { error in
+                    if let error = error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume()
                     }
                 }
             }
+
+            progressTracker.resetStartTime()
+
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                client.downloadItem(atPath: filePath, to: localURL, progress: { bytes, total -> Bool in
+                    progressTracker.update(bytes: bytes, total: total)
+                    return true
+                }) { error in
+                    if let error = error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume()
+                    }
+                }
+            }
+
+            client.disconnectShare()
+
+            guard FileManager.default.fileExists(atPath: localURL.path) else {
+                throw NSError(domain: "Download", code: -1,
+                              userInfo: [NSLocalizedDescriptionKey: "Bestand niet gevonden na download"])
+            }
+
+            self.overallProgress = 0.5
+            self.statusMessage = "Uploaden naar YouTube..."
+
+            return localURL
+
+        } catch {
+            client.disconnectShare()
+            try? FileManager.default.removeItem(at: localURL)
+            throw NSError(domain: "Download", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "SMB download mislukt: \(error.localizedDescription)"])
         }
     }
 
@@ -186,5 +231,53 @@ class BackgroundUploadManager: ObservableObject {
 
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
+    }
+}
+
+private final class SendableProgressTracker: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _progress: Double = 0
+    private var _bytesDownloaded: Int64 = 0
+    private var _totalBytes: Int64 = 0
+    private var _startTime: Date = Date()
+
+    var progress: Double {
+        lock.lock()
+        defer { lock.unlock() }
+        return _progress
+    }
+
+    var bytesDownloaded: Int64 {
+        lock.lock()
+        defer { lock.unlock() }
+        return _bytesDownloaded
+    }
+
+    var totalBytes: Int64 {
+        lock.lock()
+        defer { lock.unlock() }
+        return _totalBytes
+    }
+
+    var bytesPerSecond: Double {
+        lock.lock()
+        defer { lock.unlock() }
+        let elapsed = Date().timeIntervalSince(_startTime)
+        guard elapsed > 0 else { return 0 }
+        return Double(_bytesDownloaded) / elapsed
+    }
+
+    func update(bytes: Int64, total: Int64) {
+        lock.lock()
+        _bytesDownloaded = bytes
+        _totalBytes = total
+        _progress = total > 0 ? Double(bytes) / Double(total) : 0
+        lock.unlock()
+    }
+
+    func resetStartTime() {
+        lock.lock()
+        _startTime = Date()
+        lock.unlock()
     }
 }

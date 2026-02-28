@@ -35,8 +35,9 @@ struct ContentView: View {
                     showPlayer = true
                 })
             }
-            .sheet(isPresented: $showNetworkBrowser) {
+            .fullScreenCover(isPresented: $showNetworkBrowser) {
                 SMBBrowserView(
+                    showDiscovery: false,
                     onSelectMedia: { url in
                         playerViewModel.loadMedia(url: url)
                         showNetworkBrowser = false
@@ -85,6 +86,7 @@ struct ContentView: View {
                 Text(uploadManager.completionMessage)
             }
         }
+        .navigationViewStyle(.stack)
     }
 
     // MARK: - Upload Progress View
@@ -108,6 +110,35 @@ struct ContentView: View {
                             .font(.title3)
                             .foregroundColor(.secondary)
                             .lineLimit(1)
+
+                        if uploadManager.isDownloadingFromSMB && uploadManager.downloadTotalBytes > 0 {
+                            HStack(spacing: 12) {
+                                Text(formatFileSize(uploadManager.downloadTotalBytes))
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+
+                                if uploadManager.downloadSpeedBytesPerSec > 0 {
+                                    Text(formatSpeed(uploadManager.downloadSpeedBytesPerSec))
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        } else if !uploadManager.isDownloadingFromSMB && uploadManager.uploadTotalBytes > 0 {
+                            HStack(spacing: 12) {
+                                Text(formatFileSize(uploadManager.uploadTotalBytes))
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+
+                                if let startTime = uploadManager.uploadStartTime, uploadManager.uploadedBytes > 0 {
+                                    let elapsed = Date().timeIntervalSince(startTime)
+                                    if elapsed > 0 {
+                                        Text(formatSpeed(Double(uploadManager.uploadedBytes) / elapsed))
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     Spacer()
@@ -131,6 +162,22 @@ struct ContentView: View {
         }
     }
 
+    private func formatFileSize(_ bytes: Int64) -> String {
+        if bytes >= 1_073_741_824 {
+            return String(format: "%.1f GB", Double(bytes) / 1_073_741_824.0)
+        } else {
+            return String(format: "%.0f MB", Double(bytes) / 1_048_576.0)
+        }
+    }
+
+    private func formatSpeed(_ bytesPerSec: Double) -> String {
+        if bytesPerSec >= 1_048_576 {
+            return String(format: "%.1f MB/s", bytesPerSec / 1_048_576.0)
+        } else {
+            return String(format: "%.0f KB/s", bytesPerSec / 1024.0)
+        }
+    }
+
     private var emptyStateView: some View {
         VStack(spacing: 20) {
             Image(systemName: "play.rectangle")
@@ -141,24 +188,24 @@ struct ContentView: View {
                 .font(.title2)
                 .foregroundColor(.secondary)
 
-            HStack(spacing: 16) {
-                Button(action: { showFilePicker = true }) {
-                    Label("Lokaal", systemImage: "folder")
-                        .font(.headline)
-                        .padding()
-                        .background(Color.accentColor)
-                        .foregroundColor(.white)
-                        .cornerRadius(10)
-                }
+            Button(action: { showNetworkBrowser = true }) {
+                Label("Film selecteren", systemImage: "server.rack")
+                    .font(.title2.bold())
+                    .padding(.horizontal, 40)
+                    .padding(.vertical, 16)
+                    .background(Color.orange)
+                    .foregroundColor(.white)
+                    .cornerRadius(14)
+            }
 
-                Button(action: { showNetworkBrowser = true }) {
-                    Label("Netwerk", systemImage: "server.rack")
-                        .font(.headline)
-                        .padding()
-                        .background(Color.orange)
-                        .foregroundColor(.white)
-                        .cornerRadius(10)
-                }
+            Button(action: { showFilePicker = true }) {
+                Label("Lokaal", systemImage: "folder")
+                    .font(.subheadline)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(Color.accentColor)
+                    .foregroundColor(.white)
+                    .cornerRadius(8)
             }
 
             Text("Ondersteunt: AVI, MKV, MP4, MOV, WMV, FLV\nInclusief DV en MS-Video codecs\n\nNetwerk: Apple en Windows")
@@ -168,12 +215,12 @@ struct ContentView: View {
 
             Button(action: { showUploadedVideos = true }) {
                 Label("YouTube video's", systemImage: "film.stack")
-                    .font(.headline)
-                    .padding()
-                    .frame(minWidth: 200)
+                    .font(.title2.bold())
+                    .padding(.horizontal, 40)
+                    .padding(.vertical, 16)
                     .background(Color.green)
                     .foregroundColor(.white)
-                    .cornerRadius(10)
+                    .cornerRadius(14)
             }
         }
         .padding()

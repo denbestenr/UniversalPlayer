@@ -4,6 +4,7 @@ target 'UniversalPlayer' do
   use_frameworks!
 
   pod 'MobileVLCKit', '~> 3.6'
+  pod 'AMSMB2'
 end
 
 post_install do |installer|
