@@ -97,44 +97,54 @@ struct ContentView: View {
 
             VStack(spacing: 16) {
                 HStack {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 40))
-                        .foregroundColor(.blue)
+                    // Icoon: oranje draaiend pijltje bij retry, anders blauw upload-pijl
+                    if uploadManager.isRetrying {
+                        Image(systemName: "arrow.clockwise.circle.fill")
+                            .font(.system(size: 40))
+                            .foregroundColor(.orange)
+                    } else {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.system(size: 40))
+                            .foregroundColor(.blue)
+                    }
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text(uploadManager.statusMessage)
                             .font(.title2)
                             .fontWeight(.semibold)
+                            .foregroundColor(uploadManager.isRetrying ? .orange : .primary)
 
                         Text(uploadManager.currentVideoTitle)
                             .font(.title3)
                             .foregroundColor(.secondary)
                             .lineLimit(1)
 
-                        if uploadManager.isDownloadingFromSMB && uploadManager.downloadTotalBytes > 0 {
-                            HStack(spacing: 12) {
-                                Text(formatFileSize(uploadManager.downloadTotalBytes))
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-
-                                if uploadManager.downloadSpeedBytesPerSec > 0 {
-                                    Text(formatSpeed(uploadManager.downloadSpeedBytesPerSec))
+                        if !uploadManager.isRetrying {
+                            if uploadManager.isDownloadingFromSMB && uploadManager.downloadTotalBytes > 0 {
+                                HStack(spacing: 12) {
+                                    Text(formatFileSize(uploadManager.downloadTotalBytes))
                                         .font(.caption)
                                         .foregroundColor(.secondary)
-                                }
-                            }
-                        } else if !uploadManager.isDownloadingFromSMB && uploadManager.uploadTotalBytes > 0 {
-                            HStack(spacing: 12) {
-                                Text(formatFileSize(uploadManager.uploadTotalBytes))
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
 
-                                if let startTime = uploadManager.uploadStartTime, uploadManager.uploadedBytes > 0 {
-                                    let elapsed = Date().timeIntervalSince(startTime)
-                                    if elapsed > 0 {
-                                        Text(formatSpeed(Double(uploadManager.uploadedBytes) / elapsed))
+                                    if uploadManager.downloadSpeedBytesPerSec > 0 {
+                                        Text(formatSpeed(uploadManager.downloadSpeedBytesPerSec))
                                             .font(.caption)
                                             .foregroundColor(.secondary)
+                                    }
+                                }
+                            } else if !uploadManager.isDownloadingFromSMB && uploadManager.uploadTotalBytes > 0 {
+                                HStack(spacing: 12) {
+                                    Text(formatFileSize(uploadManager.uploadTotalBytes))
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+
+                                    if let startTime = uploadManager.uploadStartTime, uploadManager.uploadedBytes > 0 {
+                                        let elapsed = Date().timeIntervalSince(startTime)
+                                        if elapsed > 0 {
+                                            Text(formatSpeed(Double(uploadManager.uploadedBytes) / elapsed))
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
                                     }
                                 }
                             }
@@ -143,13 +153,26 @@ struct ContentView: View {
 
                     Spacer()
 
-                    Text("\(Int(uploadManager.overallProgress * 100))%")
-                        .font(.system(size: 36, weight: .bold))
-                        .foregroundColor(.blue)
+                    if uploadManager.isRetrying {
+                        // Toon poging X/Y in plaats van percentage
+                        VStack(spacing: 2) {
+                            Text("\(uploadManager.retryAttempt)/\(uploadManager.retryMaxAttempts)")
+                                .font(.system(size: 28, weight: .bold))
+                                .foregroundColor(.orange)
+                            Text("poging")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        }
+                    } else {
+                        Text("\(Int(uploadManager.overallProgress * 100))%")
+                            .font(.system(size: 36, weight: .bold))
+                            .foregroundColor(.blue)
+                    }
                 }
 
-                ProgressView(value: uploadManager.overallProgress)
+                ProgressView(value: uploadManager.isRetrying ? 0 : uploadManager.overallProgress)
                     .scaleEffect(y: 2)
+                    .tint(uploadManager.isRetrying ? .orange : .blue)
             }
             .padding(24)
             .background(

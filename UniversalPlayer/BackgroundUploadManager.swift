@@ -3,6 +3,36 @@ import SwiftUI
 import UserNotifications
 import AMSMB2
 
+// MARK: - Download Error Types
+
+private enum SMBDownloadError: LocalizedError {
+    case configuration(String)
+    case stalled(String)
+    case network(String)
+    case insufficientDiskSpace(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .configuration(let msg): return msg
+        case .stalled(let msg): return msg
+        case .network(let msg): return msg
+        case .insufficientDiskSpace(let msg): return msg
+        }
+    }
+
+    var isConfiguration: Bool {
+        if case .configuration = self { return true }
+        return false
+    }
+
+    var isStalled: Bool {
+        if case .stalled = self { return true }
+        return false
+    }
+}
+
+// MARK: - BackgroundUploadManager
+
 @MainActor
 class BackgroundUploadManager: ObservableObject {
     static let shared = BackgroundUploadManager()
@@ -22,6 +52,9 @@ class BackgroundUploadManager: ObservableObject {
     @Published var uploadTotalBytes: Int64 = 0
     @Published var uploadedBytes: Int64 = 0
     @Published var uploadStartTime: Date?
+    @Published var isRetrying = false
+    @Published var retryAttempt = 0
+    @Published var retryMaxAttempts = 0
 
     private init() {
         requestNotificationPermission()
@@ -96,6 +129,7 @@ class BackgroundUploadManager: ObservableObject {
                 // Reset after delay
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
                 isUploading = false
+                isRetrying = false
                 statusMessage = ""
                 overallProgress = 0
 
@@ -108,6 +142,7 @@ class BackgroundUploadManager: ObservableObject {
                 sendNotification(title: "Upload mislukt", body: error.localizedDescription)
 
                 isUploading = false
+                isRetrying = false
                 statusMessage = ""
                 overallProgress = 0
             }
@@ -115,54 +150,7 @@ class BackgroundUploadManager: ObservableObject {
     }
 
     private func downloadSMBFile(url: URL) async throws -> URL {
-        let documentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        let fileName = url.lastPathComponent
-        let localURL = documentsDir.appendingPathComponent("youtube_upload_\(fileName)")
-
-        try? FileManager.default.removeItem(at: localURL)
-
-        // Parse SMB URL components
-        guard let host = url.host, !host.isEmpty else {
-            throw NSError(domain: "Download", code: -1,
-                          userInfo: [NSLocalizedDescriptionKey: "Ongeldige SMB URL: geen hostnaam"])
-        }
-
-        let pathComponents = url.pathComponents.filter { $0 != "/" }
-        guard pathComponents.count >= 2 else {
-            throw NSError(domain: "Download", code: -1,
-                          userInfo: [NSLocalizedDescriptionKey: "Ongeldige SMB URL: share of bestandspad ontbreekt"])
-        }
-
-        let share = pathComponents[0]
-        let filePath = pathComponents.dropFirst().joined(separator: "/")
-
-        // Build server URL
-        var serverURLString = "smb://\(host)"
-        if let port = url.port { serverURLString += ":\(port)" }
-        guard let serverURL = URL(string: serverURLString) else {
-            throw NSError(domain: "Download", code: -1,
-                          userInfo: [NSLocalizedDescriptionKey: "Kan server URL niet aanmaken"])
-        }
-
-        // Load credentials from Keychain
-        let credential: URLCredential
-        if let user = url.user, !user.isEmpty {
-            credential = URLCredential(user: user, password: url.password ?? "", persistence: .forSession)
-        } else if let creds = KeychainService.shared.loadCredentials(for: "\(host)/\(share)"),
-                  !creds.username.isEmpty {
-            credential = URLCredential(user: creds.username, password: creds.password, persistence: .forSession)
-        } else {
-            credential = URLCredential(user: "guest", password: "", persistence: .forSession)
-        }
-
-        guard let client = AMSMB2(url: serverURL, domain: "WORKGROUP", credential: credential) else {
-            throw NSError(domain: "Download", code: -1,
-                          userInfo: [NSLocalizedDescriptionKey: "Kan SMB client niet initialiseren"])
-        }
-
         let progressTracker = SendableProgressTracker()
-
-        progressTracker.resetStartTime()
 
         let progressTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
@@ -174,10 +162,97 @@ class BackgroundUploadManager: ObservableObject {
                 self.downloadSpeedBytesPerSec = progressTracker.bytesPerSecond
             }
         }
-
         defer { progressTask.cancel() }
 
-        do {
+        let maxRetries = 5
+        retryMaxAttempts = maxRetries
+        var lastError: Error?
+
+        for attempt in 1...maxRetries {
+            if attempt > 1 {
+                progressTracker.reset()
+                isRetrying = true
+                retryAttempt = attempt
+
+                // Backoff: 2s, 4s, 8s, 16s — max 30s; toon per seconde aftellen
+                let delaySec = Int(min(30.0, pow(2.0, Double(attempt - 1))))
+                for remaining in stride(from: delaySec, through: 1, by: -1) {
+                    statusMessage = "Verbinding mislukt, opnieuw in \(remaining)s... (\(attempt)/\(maxRetries))"
+                    try await Task.sleep(nanoseconds: 1_000_000_000)
+                }
+
+                isRetrying = false
+                statusMessage = "Downloaden van server..."
+            }
+
+            do {
+                return try await attemptSMBDownload(url: url, progressTracker: progressTracker)
+            } catch let error as SMBDownloadError {
+                if error.isConfiguration {
+                    throw error
+                }
+                if error.isStalled {
+                    statusMessage = error.localizedDescription
+                }
+                lastError = error
+            } catch {
+                lastError = error
+            }
+        }
+
+        isRetrying = false
+        let base = lastError?.localizedDescription ?? "onbekende fout"
+        throw SMBDownloadError.network("SMB download mislukt na \(maxRetries) pogingen: \(base)")
+    }
+
+    private func attemptSMBDownload(url: URL, progressTracker: SendableProgressTracker) async throws -> URL {
+        let documentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let fileName = url.lastPathComponent
+        let localURL = documentsDir.appendingPathComponent("youtube_upload_\(UUID().uuidString)_\(fileName)")
+
+        // Parse SMB URL components
+        guard let host = url.host, !host.isEmpty else {
+            throw SMBDownloadError.configuration("Ongeldige SMB URL: geen hostnaam")
+        }
+
+        let pathComponents = url.pathComponents.filter { $0 != "/" }
+        guard pathComponents.count >= 2 else {
+            throw SMBDownloadError.configuration("Ongeldige SMB URL: share of bestandspad ontbreekt")
+        }
+
+        let share = pathComponents[0]
+        let filePath = pathComponents.dropFirst().joined(separator: "/")
+
+        var serverURLString = "smb://\(host)"
+        if let port = url.port { serverURLString += ":\(port)" }
+        guard let serverURL = URL(string: serverURLString) else {
+            throw SMBDownloadError.configuration("Kan server URL niet aanmaken")
+        }
+
+        let credential: URLCredential
+        if let user = url.user, !user.isEmpty {
+            credential = URLCredential(user: user, password: url.password ?? "", persistence: .forSession)
+        } else if let creds = KeychainService.shared.loadCredentials(for: "\(host)/\(share)"),
+                  !creds.username.isEmpty {
+            credential = URLCredential(user: creds.username, password: creds.password, persistence: .forSession)
+        } else {
+            credential = URLCredential(user: "guest", password: "", persistence: .forSession)
+        }
+
+        guard let client = AMSMB2(url: serverURL, domain: "WORKGROUP", credential: credential) else {
+            throw SMBDownloadError.configuration("Kan SMB client niet initialiseren")
+        }
+
+        progressTracker.reset()
+        progressTracker.resetStartTime()
+
+        var connected = false
+        defer {
+            if connected { client.disconnectShare() }
+        }
+
+        // Verbinding met timeout van 20 seconden
+        try await withSMBTimeout(seconds: 20, description: "verbinding met \(host)") {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 client.connectShare(name: share) { error in
                     if let error = error {
@@ -187,39 +262,132 @@ class BackgroundUploadManager: ObservableObject {
                     }
                 }
             }
+        }
+        connected = true
+        progressTracker.resetStartTime()
 
-            progressTracker.resetStartTime()
+        // Check bestandsgrootte en schijfruimte vóór download
+        let remoteSize = await fetchRemoteFileSize(client: client, atPath: filePath)
+        if remoteSize > 0 {
+            let freeSpace = availableDiskSpace()
+            let buffer: Int64 = 200_000_000 // 200 MB marge
+            if freeSpace < remoteSize + buffer {
+                let needed = ByteCountFormatter.string(fromByteCount: remoteSize, countStyle: .file)
+                let free = ByteCountFormatter.string(fromByteCount: freeSpace, countStyle: .file)
+                throw SMBDownloadError.insufficientDiskSpace(
+                    "Onvoldoende opslagruimte: \(needed) nodig, \(free) beschikbaar"
+                )
+            }
+        }
 
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                client.downloadItem(atPath: filePath, to: localURL, progress: { bytes, total -> Bool in
-                    progressTracker.update(bytes: bytes, total: total)
-                    return true
-                }) { error in
-                    if let error = error {
-                        continuation.resume(throwing: error)
-                    } else {
-                        continuation.resume()
+        // Download met stall-detectie
+        do {
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                // Download-taak
+                group.addTask {
+                    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                        client.downloadItem(atPath: filePath, to: localURL, progress: { bytes, total -> Bool in
+                            progressTracker.update(bytes: bytes, total: total)
+                            // Returning false cancels the AMSMB2 download cleanly
+                            return !progressTracker.shouldCancel
+                        }) { error in
+                            if let error = error {
+                                continuation.resume(throwing: error)
+                            } else {
+                                continuation.resume()
+                            }
+                        }
                     }
                 }
+
+                // Stall-detectie: als er 60 seconden geen bytes binnenkomen, annuleer
+                group.addTask {
+                    let checkInterval: Double = 10
+                    let stallLimit: Double = 60
+                    var lastBytes: Int64 = 0
+                    var stalledSeconds: Double = 0
+
+                    while !Task.isCancelled {
+                        try await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000))
+                        let currentBytes = progressTracker.bytesDownloaded
+                        if currentBytes > lastBytes {
+                            lastBytes = currentBytes
+                            stalledSeconds = 0
+                        } else {
+                            stalledSeconds += checkInterval
+                            // Alleen reageren als de download al gestart is
+                            if stalledSeconds >= stallLimit && lastBytes > 0 {
+                                progressTracker.cancelDownload()
+                                throw SMBDownloadError.stalled(
+                                    "Download vastgelopen (\(Int(stallLimit))s geen voortgang). Opnieuw verbinden..."
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Wacht op de eerste die afrondt (download klaar of stall gedetecteerd)
+                try await group.next()!
+                group.cancelAll()
+                // Drain geannuleerde taak, CancellationError negeren
+                while let _ = try? await group.next() {}
             }
-
-            client.disconnectShare()
-
-            guard FileManager.default.fileExists(atPath: localURL.path) else {
-                throw NSError(domain: "Download", code: -1,
-                              userInfo: [NSLocalizedDescriptionKey: "Bestand niet gevonden na download"])
-            }
-
-            self.overallProgress = 0.5
-            self.statusMessage = "Uploaden naar YouTube..."
-
-            return localURL
-
         } catch {
-            client.disconnectShare()
             try? FileManager.default.removeItem(at: localURL)
-            throw NSError(domain: "Download", code: -1,
-                          userInfo: [NSLocalizedDescriptionKey: "SMB download mislukt: \(error.localizedDescription)"])
+            throw error
+        }
+
+        // Valideer gedownload bestand
+        guard FileManager.default.fileExists(atPath: localURL.path) else {
+            throw SMBDownloadError.network("Bestand niet gevonden na download")
+        }
+        let attrs = try FileManager.default.attributesOfItem(atPath: localURL.path)
+        let fileSize = (attrs[.size] as? Int64) ?? 0
+        guard fileSize > 0 else {
+            try? FileManager.default.removeItem(at: localURL)
+            throw SMBDownloadError.network("Gedownload bestand is leeg (0 bytes)")
+        }
+
+        self.overallProgress = 0.5
+        self.statusMessage = "Uploaden naar YouTube..."
+
+        return localURL
+    }
+
+    // Ophalen bestandsgrootte van SMB server — niet-fataal, retourneert 0 bij fout
+    private func fetchRemoteFileSize(client: AMSMB2, atPath path: String) async -> Int64 {
+        await withCheckedContinuation { continuation in
+            client.attributesOfItem(atPath: path) { result in
+                let size: Int64
+                if case .success(let attrs) = result {
+                    size = (attrs[.fileSizeKey] as? NSNumber)?.int64Value ?? 0
+                } else {
+                    size = 0
+                }
+                continuation.resume(returning: size)
+            }
+        }
+    }
+
+    private func availableDiskSpace() -> Int64 {
+        guard let attrs = try? FileManager.default.attributesOfFileSystem(forPath: NSHomeDirectory()),
+              let free = attrs[.systemFreeSize] as? Int64 else {
+            return Int64.max
+        }
+        return free
+    }
+
+    private func withSMBTimeout<T>(seconds: Double, description: String, operation: @escaping () async throws -> T) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await operation() }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                throw NSError(domain: "Download", code: -2,
+                              userInfo: [NSLocalizedDescriptionKey: "Time-out bij \(description) (>\(Int(seconds))s). Controleer de netwerkverbinding."])
+            }
+            let result = try await group.next()!
+            group.cancelAll()
+            return result
         }
     }
 
@@ -240,6 +408,19 @@ private final class SendableProgressTracker: @unchecked Sendable {
     private var _bytesDownloaded: Int64 = 0
     private var _totalBytes: Int64 = 0
     private var _startTime: Date = Date()
+    private var _shouldCancel: Bool = false
+
+    var shouldCancel: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return _shouldCancel
+    }
+
+    func cancelDownload() {
+        lock.lock()
+        _shouldCancel = true
+        lock.unlock()
+    }
 
     var progress: Double {
         lock.lock()
@@ -278,6 +459,16 @@ private final class SendableProgressTracker: @unchecked Sendable {
     func resetStartTime() {
         lock.lock()
         _startTime = Date()
+        lock.unlock()
+    }
+
+    func reset() {
+        lock.lock()
+        _progress = 0
+        _bytesDownloaded = 0
+        _totalBytes = 0
+        _startTime = Date()
+        _shouldCancel = false
         lock.unlock()
     }
 }
